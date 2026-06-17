@@ -1,17 +1,22 @@
 # Center Image Downloader — Chrome Extension
 
-A lightweight Chrome (Manifest V3) extension that drops a floating **download
-button in the center of every web page**. Click it and the extension downloads
-the page's main image (the largest image it can find).
+A lightweight Chrome (Manifest V3) extension that puts a **download button at the
+center of every image** on a web page. Click an image's button to download that
+image. There's also a green **Download all** button and **Activate / Deactivate**
+controls to show or hide the buttons.
 
 ## Features
 
-- Floating, semi-transparent download button centered on every page.
-- One click downloads the largest image on the page.
-- Works with `<img>` tags, responsive `srcset`/`<picture>` images, large CSS
-  background images, and `blob:`/`data:` images.
-- Smart filenames derived from the image URL.
-- Also works from the toolbar icon (same "download main image" action).
+- A semi-transparent download button centered on every image — click it to save
+  that image.
+- Green **Download all** button (bottom-right) downloads every image on the page.
+- **Activate / Deactivate** buttons toggle the visibility of all download buttons,
+  so they never get in the way when you don't need them.
+- Buttons follow images as you scroll and appear for images added later (SPAs,
+  infinite scroll, lazy loading).
+- Works with `<img>` tags, responsive `srcset`/`<picture>` images, and
+  `blob:`/`data:` images. Smart filenames derived from the image URL.
+- Also works from the toolbar icon (triggers **Download all**).
 - Self-contained UI rendered in a Shadow DOM, so page styles never break it.
 - Minimal permissions: only `downloads`.
 
@@ -27,7 +32,7 @@ the page's main image (the largest image it can find).
 | File            | Role                                                                    |
 | --------------- | ----------------------------------------------------------------------- |
 | `manifest.json` | MV3 manifest, permissions, and registration.                            |
-| `content.js`    | Injects the centered button, finds the largest image, requests a save.  |
+| `content.js`    | Injects a button on each image + the Download all / Activate / Deactivate controls. |
 | `background.js` | Service worker that performs the download via the `chrome.downloads` API. |
 | `icons/`        | Toolbar / store icons.                                                   |
 

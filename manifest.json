@@ -2,13 +2,13 @@
   "manifest_version": 3,
   "name": "Center Image Downloader",
   "version": "1.0.0",
-  "description": "Adds a floating download button at the center of every page. Click it to download the page's main (largest) image.",
+  "description": "Puts a download button at the center of every image. Click it to save that image, use Download all, or toggle the buttons on/off.",
   "permissions": ["downloads"],
   "background": {
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "Download the main image on this page",
+    "default_title": "Download all images on this page",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",

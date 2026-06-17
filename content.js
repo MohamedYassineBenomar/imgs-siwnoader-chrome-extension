@@ -1,6 +1,7 @@
 // Center Image Downloader — content script.
-// Injects a floating download button into the center of the page. Clicking it
-// finds the largest image on the page and downloads it.
+// Puts a download button at the center of every image. Clicking a button
+// downloads that image. Also adds a green "Download all" button and
+// Activate/Deactivate controls that toggle the visibility of all buttons.
 
 (() => {
   "use strict";
@@ -10,18 +11,13 @@
   if (window.__centerImgDownloaderInjected) return;
   window.__centerImgDownloaderInjected = true;
 
+  const MIN_SIZE = 48; // ignore images smaller than this (icons, tracking pixels)
+
   const DOWNLOAD_ICON = `
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       <path fill="none" stroke="currentColor" stroke-width="2"
             stroke-linecap="round" stroke-linejoin="round"
             d="M12 3v12m0 0l-5-5m5 5l5-5M5 21h14"/>
-    </svg>`;
-
-  const SPINNER_ICON = `
-    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor"
-              stroke-width="2" stroke-linecap="round"
-              stroke-dasharray="40 60"/>
     </svg>`;
 
   // ---- UI (isolated in a shadow root so page styles can't break it) ----
@@ -33,121 +29,107 @@
   shadow.innerHTML = `
     <style>
       :host { all: initial; }
-      .cid-btn {
+
+      .cid-overlay { position: fixed; inset: 0; pointer-events: none; z-index: 2147483646; }
+
+      .cid-imgbtn {
         position: fixed;
-        top: 50%;
-        left: 50%;
+        width: 42px; height: 42px;
         transform: translate(-50%, -50%);
-        width: 60px;
-        height: 60px;
-        border: none;
-        border-radius: 50%;
-        background: #2563eb;
-        color: #ffffff;
+        border: none; border-radius: 50%;
+        background: #2563eb; color: #fff;
         cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
-        opacity: 0.4;
+        display: none;
+        align-items: center; justify-content: center;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+        opacity: 0.55;
         pointer-events: auto;
-        transition: opacity 0.2s ease, transform 0.15s ease, box-shadow 0.2s ease;
-        z-index: 2147483647;
+        transition: opacity 0.15s ease, transform 0.12s ease;
+        z-index: 2147483646;
       }
-      .cid-btn:hover {
-        opacity: 1;
-        transform: translate(-50%, -50%) scale(1.08);
-        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
-      }
-      .cid-btn:active { transform: translate(-50%, -50%) scale(0.95); }
-      .cid-btn svg { width: 28px; height: 28px; display: block; }
-      .cid-btn.busy { pointer-events: none; opacity: 0.85; }
-      .cid-btn.busy svg { animation: cid-spin 0.9s linear infinite; }
+      .cid-imgbtn:hover { opacity: 1; transform: translate(-50%, -50%) scale(1.12); }
+      .cid-imgbtn:active { transform: translate(-50%, -50%) scale(0.92); }
+      .cid-imgbtn svg { width: 21px; height: 21px; display: block; }
+      .cid-imgbtn.busy { pointer-events: none; opacity: 0.85; }
+      .cid-imgbtn.busy svg { animation: cid-spin 0.9s linear infinite; }
       @keyframes cid-spin { to { transform: rotate(360deg); } }
 
+      .cid-panel {
+        position: fixed; right: 16px; bottom: 16px;
+        display: flex; flex-direction: column; gap: 8px; align-items: stretch;
+        pointer-events: auto; z-index: 2147483647;
+        font: 600 13px/1 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      }
+      .cid-all {
+        display: flex; align-items: center; justify-content: center; gap: 8px;
+        background: #16a34a; color: #fff;
+        border: none; border-radius: 10px; padding: 11px 16px;
+        cursor: pointer; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+        transition: background 0.15s ease, transform 0.1s ease;
+      }
+      .cid-all:hover { background: #15803d; }
+      .cid-all:active { transform: scale(0.97); }
+      .cid-all svg { width: 18px; height: 18px; display: block; }
+      .cid-all[hidden] { display: none; }
+
+      .cid-toggle { display: flex; gap: 6px; }
+      .cid-toggle button {
+        flex: 1; border: none; border-radius: 8px; padding: 8px 10px;
+        color: #fff; cursor: pointer; font: inherit;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.22);
+        transition: background 0.15s ease, transform 0.1s ease;
+      }
+      .cid-toggle button:active { transform: scale(0.96); }
+      .cid-on { background: #2563eb; }
+      .cid-on:hover { background: #1d4ed8; }
+      .cid-off { background: #6b7280; }
+      .cid-off:hover { background: #4b5563; }
+      .cid-on.current { outline: 2px solid #bfdbfe; outline-offset: 1px; }
+      .cid-off.current { outline: 2px solid #d1d5db; outline-offset: 1px; }
+
       .cid-toast {
-        position: fixed;
-        top: calc(50% + 52px);
-        left: 50%;
-        transform: translateX(-50%);
-        background: rgba(17, 24, 39, 0.95);
-        color: #ffffff;
-        padding: 8px 14px;
-        border-radius: 8px;
+        position: fixed; left: 50%; bottom: 86px; transform: translateX(-50%);
+        background: rgba(17, 24, 39, 0.95); color: #fff;
+        padding: 8px 14px; border-radius: 8px; white-space: nowrap;
         font: 13px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-        white-space: nowrap;
-        pointer-events: none;
-        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
-        z-index: 2147483647;
-        opacity: 0;
-        transition: opacity 0.2s ease;
+        pointer-events: none; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+        z-index: 2147483647; opacity: 0; transition: opacity 0.2s ease;
       }
       .cid-toast.show { opacity: 1; }
       .cid-toast.ok { background: rgba(5, 122, 85, 0.96); }
       .cid-toast.err { background: rgba(185, 28, 28, 0.96); }
     </style>
-    <button class="cid-btn" type="button" title="Download the main image on this page">
-      ${DOWNLOAD_ICON}
-    </button>
+    <div class="cid-overlay"></div>
+    <div class="cid-panel">
+      <button class="cid-all" type="button" title="Download every image on this page">
+        ${DOWNLOAD_ICON}<span>Download all</span>
+      </button>
+      <div class="cid-toggle">
+        <button class="cid-on" type="button" title="Show the download buttons">Activate</button>
+        <button class="cid-off" type="button" title="Hide the download buttons">Deactivate</button>
+      </div>
+    </div>
     <div class="cid-toast" role="status"></div>
   `;
 
   (document.body || document.documentElement).appendChild(host);
 
-  const btn = shadow.querySelector(".cid-btn");
+  const overlay = shadow.querySelector(".cid-overlay");
+  const allBtn = shadow.querySelector(".cid-all");
+  const onBtn = shadow.querySelector(".cid-on");
+  const offBtn = shadow.querySelector(".cid-off");
   const toastEl = shadow.querySelector(".cid-toast");
 
+  // ---- Toast ----
   let toastTimer = null;
   function toast(message, kind) {
     toastEl.textContent = message;
     toastEl.className = "cid-toast show" + (kind ? " " + kind : "");
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => {
-      toastEl.classList.remove("show");
-    }, 2600);
+    toastTimer = setTimeout(() => toastEl.classList.remove("show"), 2600);
   }
 
-  // ---- Image discovery ----
-  function bgImageUrl(value) {
-    if (!value || value === "none") return null;
-    const m = /url\((['"]?)(.*?)\1\)/i.exec(value);
-    return m ? m[2] : null;
-  }
-
-  // Returns the source URL of the largest image on the page (or null).
-  function findLargestImage() {
-    let bestUrl = null;
-    let bestArea = 0;
-
-    // <img> elements (covers <picture> via currentSrc as well).
-    for (const img of document.images) {
-      const src = img.currentSrc || img.src;
-      if (!src) continue;
-      const rect = img.getBoundingClientRect();
-      const natural = (img.naturalWidth || 0) * (img.naturalHeight || 0);
-      const rendered = rect.width * rect.height;
-      const area = Math.max(natural, rendered);
-      if (area > bestArea) {
-        bestArea = area;
-        bestUrl = src;
-      }
-    }
-
-    // Large CSS background images (hero banners, etc.).
-    for (const el of document.querySelectorAll("*")) {
-      const rect = el.getBoundingClientRect();
-      const area = rect.width * rect.height;
-      if (area <= bestArea || area < 40000) continue;
-      const url = bgImageUrl(getComputedStyle(el).backgroundImage);
-      if (url && /^(https?:|data:|blob:)/i.test(url)) {
-        bestArea = area;
-        bestUrl = url;
-      }
-    }
-
-    return bestUrl;
-  }
-
+  // ---- Download helpers ----
   function filenameFromUrl(url) {
     try {
       if (url.startsWith("data:")) {
@@ -159,9 +141,7 @@
       let name = decodeURIComponent((u.pathname.split("/").pop() || "").trim());
       name = name.split("?")[0];
       if (!name) name = "image";
-      if (!/\.(png|jpe?g|gif|webp|bmp|svg|avif|ico)$/i.test(name)) {
-        name += ".jpg";
-      }
+      if (!/\.(png|jpe?g|gif|webp|bmp|svg|avif|ico)$/i.test(name)) name += ".jpg";
       return name.replace(/[\\/:*?"<>|]+/g, "_").slice(0, 120);
     } catch {
       return `image-${Date.now()}.jpg`;
@@ -177,8 +157,8 @@
     });
   }
 
-  // The downloads API can take http(s)/data URLs directly. blob: URLs only
-  // live in the page, so convert them to a data URL the worker can use.
+  // The downloads API accepts http(s)/data URLs directly. blob: URLs only live
+  // in the page, so convert them to a data URL the service worker can use.
   async function toDownloadableUrl(src) {
     if (src.startsWith("blob:")) {
       const resp = await fetch(src);
@@ -188,52 +168,183 @@
     return src;
   }
 
-  // ---- Main action ----
-  let busy = false;
-  async function triggerDownload() {
-    if (busy) return;
-    const src = findLargestImage();
-    if (!src) {
-      toast("No image found on this page", "err");
-      return;
-    }
+  async function download(src) {
+    const url = await toDownloadableUrl(src);
+    const res = await chrome.runtime.sendMessage({
+      type: "CID_DOWNLOAD",
+      url,
+      filename: filenameFromUrl(src)
+    });
+    if (!res || !res.ok) throw new Error((res && res.error) || "unknown");
+  }
 
-    busy = true;
-    btn.classList.add("busy");
-    btn.innerHTML = SPINNER_ICON;
-
+  async function downloadOne(src, btn) {
+    if (!src || (btn && btn.classList.contains("busy"))) return;
+    if (btn) btn.classList.add("busy");
     try {
-      const url = await toDownloadableUrl(src);
-      const filename = filenameFromUrl(src);
-      const res = await chrome.runtime.sendMessage({
-        type: "CID_DOWNLOAD",
-        url,
-        filename
-      });
-      if (res && res.ok) {
-        toast("Image saved ✓", "ok");
-      } else {
-        toast("Download failed: " + ((res && res.error) || "unknown"), "err");
-      }
+      await download(src);
+      toast("Image saved ✓", "ok");
     } catch (e) {
       const msg = String((e && e.message) || e);
-      // Fired when the extension is reloaded while the page is open.
       if (/context invalidated/i.test(msg)) {
         toast("Reload this page to use the downloader", "err");
       } else {
-        toast("Download failed", "err");
+        toast("Download failed: " + msg, "err");
       }
     } finally {
-      busy = false;
-      btn.classList.remove("busy");
-      btn.innerHTML = DOWNLOAD_ICON;
+      if (btn) btn.classList.remove("busy");
     }
   }
 
-  btn.addEventListener("click", triggerDownload);
+  function eligibleSources() {
+    const sources = [];
+    const seen = new Set();
+    for (const img of document.images) {
+      const src = img.currentSrc || img.src;
+      if (!src || seen.has(src)) continue;
+      const rect = img.getBoundingClientRect();
+      const bigEnough =
+        (img.naturalWidth >= 32 && img.naturalHeight >= 32) ||
+        Math.max(rect.width, rect.height) >= MIN_SIZE;
+      if (!bigEnough) continue;
+      seen.add(src);
+      sources.push(src);
+    }
+    return sources;
+  }
 
-  // Allow the toolbar icon to trigger the same action.
+  let downloadingAll = false;
+  async function downloadAll() {
+    if (downloadingAll) return;
+    const sources = eligibleSources();
+    if (!sources.length) {
+      toast("No images to download", "err");
+      return;
+    }
+    downloadingAll = true;
+    allBtn.disabled = true;
+    toast(`Downloading ${sources.length} image${sources.length > 1 ? "s" : ""}…`);
+    let ok = 0;
+    let fail = 0;
+    for (const src of sources) {
+      try {
+        await download(src);
+        ok++;
+      } catch {
+        fail++;
+      }
+    }
+    downloadingAll = false;
+    allBtn.disabled = false;
+    toast(
+      `Saved ${ok} image${ok !== 1 ? "s" : ""}` + (fail ? `, ${fail} failed` : ""),
+      fail ? "err" : "ok"
+    );
+  }
+
+  // ---- Per-image buttons ----
+  const tracked = new Map(); // img element -> button element
+
+  function addButton(img) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "cid-imgbtn";
+    btn.title = "Download this image";
+    btn.innerHTML = DOWNLOAD_ICON;
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      downloadOne(img.currentSrc || img.src, btn);
+    });
+    overlay.appendChild(btn);
+    tracked.set(img, btn);
+  }
+
+  function removeButton(img) {
+    const btn = tracked.get(img);
+    if (btn) btn.remove();
+    tracked.delete(img);
+  }
+
+  function refreshImages() {
+    const present = new Set();
+    for (const img of document.images) {
+      present.add(img);
+      if (!tracked.has(img)) addButton(img);
+    }
+    for (const img of [...tracked.keys()]) {
+      if (!present.has(img)) removeButton(img);
+    }
+    reposition();
+  }
+
+  let active = true;
+  function reposition() {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    for (const [img, btn] of tracked) {
+      const r = img.getBoundingClientRect();
+      const visible =
+        active &&
+        Math.max(r.width, r.height) >= MIN_SIZE &&
+        r.bottom > 0 && r.right > 0 && r.top < vh && r.left < vw;
+      if (!visible) {
+        btn.style.display = "none";
+        continue;
+      }
+      btn.style.display = "flex";
+      btn.style.left = r.left + r.width / 2 + "px";
+      btn.style.top = r.top + r.height / 2 + "px";
+    }
+  }
+
+  function setActive(value) {
+    active = value;
+    onBtn.classList.toggle("current", active);
+    offBtn.classList.toggle("current", !active);
+    allBtn.hidden = !active;
+    reposition();
+  }
+
+  // ---- Wiring ----
+  allBtn.addEventListener("click", downloadAll);
+  onBtn.addEventListener("click", () => setActive(true));
+  offBtn.addEventListener("click", () => setActive(false));
+
+  let rafPending = false;
+  function scheduleReposition() {
+    if (rafPending) return;
+    rafPending = true;
+    requestAnimationFrame(() => {
+      rafPending = false;
+      reposition();
+    });
+  }
+
+  let refreshPending = false;
+  function scheduleRefresh() {
+    if (refreshPending) return;
+    refreshPending = true;
+    requestAnimationFrame(() => {
+      refreshPending = false;
+      refreshImages();
+    });
+  }
+
+  window.addEventListener("scroll", scheduleReposition, { passive: true, capture: true });
+  window.addEventListener("resize", scheduleReposition);
+  document.addEventListener("load", scheduleReposition, true); // image finished loading
+  new MutationObserver(scheduleRefresh).observe(document.documentElement, {
+    childList: true,
+    subtree: true
+  });
+  setInterval(refreshImages, 700); // catch SPA navigation / layout shifts
+
+  setActive(true);
+  refreshImages();
+
+  // Toolbar icon triggers "Download all".
   chrome.runtime.onMessage.addListener((msg) => {
-    if (msg && msg.type === "CID_TRIGGER") triggerDownload();
+    if (msg && msg.type === "CID_TRIGGER") downloadAll();
   });
 })();
