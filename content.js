@@ -200,14 +200,15 @@
   function eligibleSources() {
     const sources = [];
     const seen = new Set();
-    for (const img of document.images) {
-      const src = img.currentSrc || img.src;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    for (const [el, rec] of tracked) {
+      const r = el.getBoundingClientRect();
+      const fullPageBg =
+        rec.type === "bg" && r.width >= vw * 0.95 && r.height >= vh * 0.95;
+      if (fullPageBg || Math.max(r.width, r.height) < MIN_SIZE) continue;
+      const src = rec.getSrc();
       if (!src || seen.has(src)) continue;
-      const rect = img.getBoundingClientRect();
-      const bigEnough =
-        (img.naturalWidth >= 32 && img.naturalHeight >= 32) ||
-        Math.max(rect.width, rect.height) >= MIN_SIZE;
-      if (!bigEnough) continue;
       seen.add(src);
       sources.push(src);
     }
@@ -243,10 +244,71 @@
     );
   }
 
-  // ---- Per-image buttons ----
-  const tracked = new Map(); // img element -> button element
+  // ---- Image targets ----
+  // Covers <img> (incl. srcset/<picture>), CSS background-images (inline or
+  // class-based), role="img" elements, and <video> posters.
+  function bgUrlOf(el) {
+    const bg = getComputedStyle(el).backgroundImage;
+    if (!bg || bg === "none" || bg.indexOf("url(") === -1) return "";
+    const m = /url\((['"]?)(.*?)\1\)/i.exec(bg);
+    if (!m || !m[2] || m[2].startsWith("#")) return "";
+    try {
+      return new URL(m[2], location.href).href;
+    } catch {
+      return m[2];
+    }
+  }
 
-  function addButton(img) {
+  let lastDeepScan = 0;
+  let deepBgEls = [];
+
+  // Returns [element, getSrc, type] for every downloadable image-like thing.
+  function collectTargets() {
+    const out = [];
+    const seen = new Set();
+    const add = (el, getSrc, type) => {
+      if (!el || el === host || seen.has(el)) return;
+      seen.add(el);
+      out.push([el, getSrc, type]);
+    };
+
+    // 1. Real <img> elements.
+    for (const img of document.images) {
+      add(img, () => img.currentSrc || img.src || "", "img");
+    }
+
+    // 2. Cheap pass: inline background-images, role="img", and video posters.
+    //    This is what catches e.g. Tinder's <div role="img"
+    //    style="background-image:url(...)"> photo cards.
+    document
+      .querySelectorAll('[style*="background-image"], [role="img"], video[poster]')
+      .forEach((el) => {
+        if (el.tagName === "VIDEO") add(el, () => el.poster || "", "img");
+        else add(el, () => bgUrlOf(el), "bg");
+      });
+
+    // 3. Throttled deep pass: background-images applied via CSS classes.
+    const now = Date.now();
+    if (now - lastDeepScan > 1500) {
+      lastDeepScan = now;
+      deepBgEls = [];
+      const all = document.body ? document.body.getElementsByTagName("*") : [];
+      const limit = Math.min(all.length, 4000);
+      for (let i = 0; i < limit; i++) {
+        const el = all[i];
+        if (el === host) continue;
+        const bg = getComputedStyle(el).backgroundImage;
+        if (bg && bg !== "none" && bg.indexOf("url(") !== -1) deepBgEls.push(el);
+      }
+    }
+    for (const el of deepBgEls) add(el, () => bgUrlOf(el), "bg");
+
+    return out;
+  }
+
+  const tracked = new Map(); // element -> { btn, getSrc, type }
+
+  function addButton(el, getSrc, type) {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "cid-imgbtn";
@@ -255,26 +317,31 @@
     btn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      downloadOne(img.currentSrc || img.src, btn);
+      const rec = tracked.get(el);
+      const src = (rec ? rec.getSrc() : getSrc()) || "";
+      if (src) downloadOne(src, btn);
+      else toast("No image source found here", "err");
     });
     overlay.appendChild(btn);
-    tracked.set(img, btn);
+    tracked.set(el, { btn, getSrc, type });
   }
 
-  function removeButton(img) {
-    const btn = tracked.get(img);
-    if (btn) btn.remove();
-    tracked.delete(img);
+  function removeButton(el) {
+    const rec = tracked.get(el);
+    if (rec) rec.btn.remove();
+    tracked.delete(el);
   }
 
-  function refreshImages() {
+  function refreshTargets() {
     const present = new Set();
-    for (const img of document.images) {
-      present.add(img);
-      if (!tracked.has(img)) addButton(img);
+    for (const [el, getSrc, type] of collectTargets()) {
+      present.add(el);
+      const rec = tracked.get(el);
+      if (rec) rec.getSrc = getSrc; // keep source fresh (carousels swap images)
+      else addButton(el, getSrc, type);
     }
-    for (const img of [...tracked.keys()]) {
-      if (!present.has(img)) removeButton(img);
+    for (const el of [...tracked.keys()]) {
+      if (!present.has(el)) removeButton(el);
     }
     reposition();
   }
@@ -288,19 +355,23 @@
     // from the viewport, so subtract its own position to land buttons exactly
     // over each image regardless of the containing block.
     const base = overlay.getBoundingClientRect();
-    for (const [img, btn] of tracked) {
-      const r = img.getBoundingClientRect();
+    for (const [el, rec] of tracked) {
+      const r = el.getBoundingClientRect();
+      // Skip page-wide background images (body/hero backgrounds) so we never
+      // drop a button in the dead center of the whole page.
+      const fullPageBg =
+        rec.type === "bg" && r.width >= vw * 0.95 && r.height >= vh * 0.95;
       const visible =
-        active &&
+        active && !fullPageBg &&
         Math.max(r.width, r.height) >= MIN_SIZE &&
         r.bottom > 0 && r.right > 0 && r.top < vh && r.left < vw;
       if (!visible) {
-        btn.style.display = "none";
+        rec.btn.style.display = "none";
         continue;
       }
-      btn.style.display = "flex";
-      btn.style.left = r.left + r.width / 2 - base.left + "px";
-      btn.style.top = r.top + r.height / 2 - base.top + "px";
+      rec.btn.style.display = "flex";
+      rec.btn.style.left = r.left + r.width / 2 - base.left + "px";
+      rec.btn.style.top = r.top + r.height / 2 - base.top + "px";
     }
   }
 
@@ -333,7 +404,7 @@
     refreshPending = true;
     requestAnimationFrame(() => {
       refreshPending = false;
-      refreshImages();
+      refreshTargets();
     });
   }
 
@@ -345,12 +416,12 @@
     childList: true,
     subtree: true
   });
-  setInterval(refreshImages, 700); // catch SPA navigation / layout shifts
+  setInterval(refreshTargets, 800); // catch SPA navigation / layout shifts
 
   setActive(true);
-  refreshImages();
+  refreshTargets();
   // Re-run a few times early on to catch images that size up after first paint.
-  [150, 500, 1200, 2500].forEach((delay) => setTimeout(refreshImages, delay));
+  [150, 500, 1200, 2500].forEach((delay) => setTimeout(refreshTargets, delay));
 
   // Toolbar icon triggers "Download all".
   chrome.runtime.onMessage.addListener((msg) => {

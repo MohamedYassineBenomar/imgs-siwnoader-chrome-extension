@@ -14,8 +14,12 @@ controls to show or hide the buttons.
   so they never get in the way when you don't need them.
 - Buttons follow images as you scroll and appear for images added later (SPAs,
   infinite scroll, lazy loading).
-- Works with `<img>` tags, responsive `srcset`/`<picture>` images, and
-  `blob:`/`data:` images. Smart filenames derived from the image URL.
+- Detects images in every common form: `<img>` tags, responsive
+  `srcset`/`<picture>` images, **CSS `background-image`** elements (inline or
+  class-based, e.g. Tinder photo cards), `role="img"` elements, `<video>`
+  posters, and `blob:`/`data:` sources. Smart filenames derived from the URL.
+- Skips page-wide background images so you never get a button stuck in the
+  dead center of the whole page.
 - Also works from the toolbar icon (triggers **Download all**).
 - Self-contained UI rendered in a Shadow DOM, so page styles never break it.
 - Minimal permissions: only `downloads`.
