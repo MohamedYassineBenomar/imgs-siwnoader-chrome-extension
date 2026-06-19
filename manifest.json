@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Center Image Downloader",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Puts a download button at the center of every image. Click it to save that image, use Download all, or toggle the buttons on/off.",
   "permissions": ["downloads"],
   "background": {

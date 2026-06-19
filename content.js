@@ -30,19 +30,20 @@
     <style>
       :host { all: initial; }
 
-      .cid-overlay { position: fixed; inset: 0; pointer-events: none; z-index: 2147483646; }
+      .cid-overlay { position: fixed; inset: 0; pointer-events: none; overflow: visible; z-index: 2147483646; }
 
       .cid-imgbtn {
-        position: fixed;
+        position: absolute;
         width: 42px; height: 42px;
         transform: translate(-50%, -50%);
-        border: none; border-radius: 50%;
+        border: 2px solid rgba(255, 255, 255, 0.9); border-radius: 50%;
         background: #2563eb; color: #fff;
+        box-sizing: border-box;
         cursor: pointer;
         display: none;
         align-items: center; justify-content: center;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
-        opacity: 0.55;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+        opacity: 0.75;
         pointer-events: auto;
         transition: opacity 0.15s ease, transform 0.12s ease;
         z-index: 2147483646;
@@ -282,6 +283,11 @@
   function reposition() {
     const vw = window.innerWidth;
     const vh = window.innerHeight;
+    // The buttons are absolutely positioned inside the overlay. If a page
+    // ancestor has a transform/filter, the overlay's fixed box may be offset
+    // from the viewport, so subtract its own position to land buttons exactly
+    // over each image regardless of the containing block.
+    const base = overlay.getBoundingClientRect();
     for (const [img, btn] of tracked) {
       const r = img.getBoundingClientRect();
       const visible =
@@ -293,8 +299,8 @@
         continue;
       }
       btn.style.display = "flex";
-      btn.style.left = r.left + r.width / 2 + "px";
-      btn.style.top = r.top + r.height / 2 + "px";
+      btn.style.left = r.left + r.width / 2 - base.left + "px";
+      btn.style.top = r.top + r.height / 2 - base.top + "px";
     }
   }
 
@@ -333,6 +339,7 @@
 
   window.addEventListener("scroll", scheduleReposition, { passive: true, capture: true });
   window.addEventListener("resize", scheduleReposition);
+  window.addEventListener("load", scheduleRefresh);
   document.addEventListener("load", scheduleReposition, true); // image finished loading
   new MutationObserver(scheduleRefresh).observe(document.documentElement, {
     childList: true,
@@ -342,6 +349,8 @@
 
   setActive(true);
   refreshImages();
+  // Re-run a few times early on to catch images that size up after first paint.
+  [150, 500, 1200, 2500].forEach((delay) => setTimeout(refreshImages, delay));
 
   // Toolbar icon triggers "Download all".
   chrome.runtime.onMessage.addListener((msg) => {
